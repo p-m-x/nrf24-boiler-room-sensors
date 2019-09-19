@@ -38,6 +38,7 @@
 #include <PubSubClient.h>
 #include <OneWire.h>
 #include <DallasTemperature.h>
+#include <FlowMeter.h> 
 
 #define ONE_WIRE_BUS 2
 #define TEMPERATURE_PRECISION 9
@@ -45,6 +46,8 @@
 #define MESH_CONNECTION_CHECK_INTERVAL_MS 3000
 #define TEMP_CONVERSION_INTERVAL_MS 1000
 #define SEND_DATA_INTERVAL_MS 5000
+#define HOT_WATER_FLOW_METER_PIN 3  //INT1
+#define COLD_WATER_FLOW_METER_PIN 2 //INT0
 
 OneWire oneWire(ONE_WIRE_BUS);
 
@@ -66,16 +69,20 @@ char *clientID = {"BoilerRoomClient"};
 EthernetClient ethClient;
 PubSubClient client(ethClient);
 
+FlowMeter flowRateMeterCold = FlowMeter(COLD_WATER_FLOW_METER_PIN, FS400A);
+FlowMeter flowRateMeterHot = FlowMeter(HOT_WATER_FLOW_METER_PIN, FS400A);
+
+const unsigned long period = 500;
 uint32_t mesh_timer = 0;
 uint32_t temp_conversion_timer = 0;
 uint32_t send_data_timer = 0;
 String topicTemperatureSensor = "sensors/boiler-room/temperature/t";
 
-
 void printDS18B20Address(DeviceAddress deviceAddress);
 void mqttCallbackFunc(char* topic, byte* payload, unsigned int length);
 void mqttReconnect();
-
+void coldWaterFlowMeterISR();
+void hotWaterFlowMeterISR();
 
 void setup()
 {
@@ -114,9 +121,15 @@ void setup()
     Serial.println(" Failed");
   }
   clientID[13] = ip[3] + 48; //Convert last octet of IP to ascii & use in clientID
+
+  if (isGatewayReady) {
+    flowRateMeterCold.reset();
+    flowRateMeterHot.reset();
+
+    attachInterrupt(INT0, coldWaterFlowMeterISR, RISING);
+    attachInterrupt(INT1, hotWaterFlowMeterISR, RISING);
+  }
 }
-
-
 
 void loop()
 {
@@ -141,10 +154,42 @@ void loop()
 
     if (millis() - send_data_timer > SEND_DATA_INTERVAL_MS) {      
       if (tempSensors.isConversionComplete()) {
+        long period = millis() - send_data_timer;
         send_data_timer = millis();
         char payload[10];
         char topic[50];
 
+        flowRateMeterCold.tick(period);
+        flowRateMeterHot.tick(period);
+
+        // Send water flow measurenments
+        sprintf(topic, "%s", "sensors/boiler-room/water/flow-rate/cold");
+        dtostrf(flowRateMeterCold.getCurrentFlowrate(), 4, 2, payload);
+        client.publish(topic, payload);
+
+        sprintf(topic, "%s", "sensors/boiler-room/water/flow-rate/hot");
+        dtostrf(flowRateMeterHot.getCurrentFlowrate(), 4, 2, payload);
+        client.publish(topic, payload);
+
+        sprintf(topic, "%s", "sensors/boiler-room/water/flow-rate/current-volume");
+        dtostrf(flowRateMeterCold.getCurrentVolume(), 4, 2, payload);
+        client.publish(topic, payload);
+
+        sprintf(topic, "%s", "sensors/boiler-room/water/flow-rate/current-volume");
+        dtostrf(flowRateMeterHot.getCurrentVolume(), 4, 2, payload);
+        client.publish(topic, payload);
+
+        sprintf(topic, "%s", "sensors/boiler-room/water/flow-rate/volume");
+        dtostrf(flowRateMeterCold.getTotalVolume(), 4, 2, payload);
+        flowRateMeterCold.setTotalVolume(0.0);
+        client.publish(topic, payload);
+
+        sprintf(topic, "%s", "sensors/boiler-room/water/flow-rate/volume");
+        dtostrf(flowRateMeterHot.getTotalVolume(), 4, 2, payload);
+        flowRateMeterHot.setTotalVolume(0.0);
+        client.publish(topic, payload);
+
+        // Send temperature
         for (int i = 0; i < ds18B20deviceCount; i++) {
           dtostrf(tempSensors.getTempCByIndex(i), 4, 2, payload);
           sprintf(topic, "%s%d", "sensors/boiler-room/temperature/t", i);
@@ -160,8 +205,15 @@ void loop()
         Serial.println(F("ERROR - temp conversion did not finish yet"));
       }
     }
-  }
-  
+  }  
+}
+
+void coldWaterFlowMeterISR() {
+  flowRateMeterCold.count();
+}
+
+void hotWaterFlowMeterISR() {
+  flowRateMeterHot.count();
 }
 
 // function to print a device address
