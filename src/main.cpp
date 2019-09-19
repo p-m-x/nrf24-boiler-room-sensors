@@ -74,27 +74,8 @@ String topicTemperatureSensor = "sensors/boiler-room/temperature/t";
 
 void printDS18B20Address(DeviceAddress deviceAddress);
 void mqttCallbackFunc(char* topic, byte* payload, unsigned int length);
+void mqttReconnect();
 
-void reconnect() {
-  // Loop until we're reconnected
-  if (!client.connected()) {
-    Serial.print("Attempting MQTT connection...");
-    // Attempt to connect
-    if (client.connect(clientID)) {
-      Serial.println("connected");
-      // Once connected, publish an announcement...
-      client.publish("outTopic","hello world");
-      // ... and resubscribe
-      client.subscribe("inTopic");
-    } else {
-      Serial.print("failed, rc=");
-      Serial.print(client.state());
-      Serial.println(" try again in 5 seconds");
-      // Wait 5 seconds before retrying
-      delay(5000);
-    }
-  }
-}
 
 void setup()
 {
@@ -147,7 +128,7 @@ void loop()
     }
   }  
   if (!client.connected()) {
-    reconnect();
+    mqttReconnect();
   }
   client.loop();
 
@@ -202,4 +183,25 @@ void mqttCallbackFunc(char* topic, byte* payload, unsigned int length) {
     Serial.print((char)payload[i]);
   }
   Serial.println();
+}
+
+void mqttReconnect() {
+  // Loop until we're reconnected
+  if (!client.connected()) {
+    Serial.print("Attempting MQTT connection...");
+    // Attempt to connect
+    if (client.connect(clientID)) {
+      Serial.println("connected");
+      // Once connected, publish an announcement...
+      client.publish("outTopic","hello world");
+      // ... and resubscribe
+      client.subscribe("inTopic");
+    } else {
+      Serial.print("failed, rc=");
+      Serial.print(client.state());
+      Serial.println(" try again in 5 seconds");
+      // Wait 5 seconds before retrying
+      delay(5000);
+    }
+  }
 }
